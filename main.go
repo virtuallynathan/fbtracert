@@ -41,9 +41,7 @@ var srcAddr = flag.String("srcAddr", "", "The source address for pings, default 
 var jsonOutput = flag.Bool("jsonOutput", false, "Output raw JSON data")
 var baseSrcPort = flag.Int("baseSrcPort", 32768, "The base source port to start probing from")
 
-//
-// Discover the source address for pinging
-//
+// getSourceAddr discovers the source address for pinging
 func getSourceAddr(af string, srcAddr string) (*net.IP, error) {
 
 	if srcAddr != "" {
@@ -107,12 +105,11 @@ func TCPReceiver(done <-chan struct{}, af string, targetAddr string, probePortSt
 	switch {
 	case af == "ip4":
 		recvSocket, err = syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_TCP)
-		// IPv4 header is always included with the ipv4 raw socket receive
-		ipHdrSize = 20
+		ipHdrSize = 20 // IPv4 header is always included with the ipv4 raw socket receive
 	case af == "ip6":
 		recvSocket, err = syscall.Socket(syscall.AF_INET6, syscall.SOCK_RAW, syscall.IPPROTO_TCP)
-		// no IPv6 header present on TCP packets received on the raw socket
-		ipHdrSize = 0
+		ipHdrSize = 0 // no IPv6 header present on TCP packets received on the raw socket
+
 	default:
 		return nil, fmt.Errorf("Unknown address family supplied")
 	}
@@ -148,7 +145,7 @@ func TCPReceiver(done <-chan struct{}, af string, targetAddr string, probePortSt
 				continue
 			}
 
-			// is that TCP RST TCP ACK?
+			// is that TCP RST or TCP ACK?
 			if tcpHdr.Flags&RST != RST && tcpHdr.Flags&ACK != ACK {
 				continue
 			}
@@ -222,20 +219,16 @@ func ICMPReceiver(done <-chan struct{}, af string) (chan interface{}, error) {
 	switch {
 	case af == "ip4":
 		recvSocket, err = syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
-		// IPv4 raw socket always prepend the transport IPv4 header
-		outerIPHdrSize = 20
-		// the size of the original IPv4 header that was on the TCP packet sent out
-		innerIPHdrSize = 20
-		// hardcoded: time to live exceeded
-		icmpMsgType = 11
+		outerIPHdrSize = 20 // IPv4 raw socket always prepends the transport IPv4 header
+		innerIPHdrSize = 20 // size of IPv4 header of the original TCP packet we used in the probes
+		icmpMsgType = 11    // hardcoded: time to live exceeded
+
 	case af == "ip6":
 		recvSocket, err = syscall.Socket(syscall.AF_INET6, syscall.SOCK_RAW, syscall.IPPROTO_ICMPV6)
-		// IPv6 raw socket does not prepend the original transport IPv6 header
-		outerIPHdrSize = 0
-		// this is the size of IPv6 header of the original TCP packet we used in the probes
-		innerIPHdrSize = 40
-		// time to live exceeded
-		icmpMsgType = 3
+		outerIPHdrSize = 0  // IPv6 raw socket does not prepend the original transport IPv6 header
+		innerIPHdrSize = 40 // size of IPv6 header of the original TCP packet we used in the probes
+		icmpMsgType = 3     // time to live exceeded
+
 	}
 
 	if err != nil {
@@ -450,9 +443,7 @@ func Sender(done <-chan struct{}, srcAddr *net.IP, af, dest string, dstPort, bas
 	return out, nil
 }
 
-//
-// Normalize rcvd by send count to get the hit rate
-//
+// normalizeRcvd normalizes the rcvd results by send count to get the hit rate
 func normalizeRcvd(sent, rcvd []int) ([]float64, error) {
 	if len(rcvd) != len(sent) {
 		return nil, fmt.Errorf("Length mismatch for sent/rcvd")
@@ -466,11 +457,8 @@ func normalizeRcvd(sent, rcvd []int) ([]float64, error) {
 	return result, nil
 }
 
-//
-// Detect a pattern where all samples after
-// a sample [i] have lower hit rate than [i]
+// isLossy detects a pattern where all samples after a sample [i] have lower hit rate than [i]
 // this normally indicates a breaking point after [i]
-//
 func isLossy(hitRates []float64) bool {
 	var found bool
 	var segLen int
@@ -491,10 +479,8 @@ func isLossy(hitRates []float64) bool {
 	return false
 }
 
-//
-// print the paths reported as having losses
-//
-func printLossyPaths(sent, rcvd map[int] /* src port */ []int, hops map[int] /* src port */ []string, maxColumns, maxTTL int) {
+// printLossyPaths prints the paths reported as having loss
+func printLossyPaths(sent, rcvd map[int][]int, hops map[int][]string, maxColumns, maxTTL int) {
 	var allPorts []int
 
 	for srcPort := range hops {
@@ -538,32 +524,31 @@ func printLossyPaths(sent, rcvd map[int] /* src port */ []int, hops map[int] /* 
 
 // Report defines a JSON report from go/fbtracert
 type Report struct {
-	// The path map
-	Paths map[string] /* srcPort */ []string /* path hops */
-	// Probe count sent per source port/hop name
-	Sent map[string][]int
-	// Probe count received per source port/hop name
-	Rcvd map[string][]int
+	// maps that store various counters per source port/ttl
+	// e.g. sent, for every source port, contains vector of sent packets for each TTL
+	Paths map[int][]string // The path map of srcPort(int) -> path hops ([]string)
+	Sent  map[int][]int    // Probe count sent per source port/hop name
+	Rcvd  map[int][]int    // Probe count received per source port/hop name
+
 }
 
+// newReport generates a new struct for our tracert data
 func newReport() (report Report) {
-	report.Paths = make(map[string][]string)
-	report.Sent = make(map[string][]int)
-	report.Rcvd = make(map[string][]int)
+	report.Paths = make(map[int][]string)
+	report.Sent = make(map[int][]int)
+	report.Rcvd = make(map[int][]int)
 
 	return report
 }
 
-//
-// Raw Json output for external program to analyze
-//
-func printLossyPathsJSON(sent, rcvd map[int] /* src port */ []int, hops map[int] /* src port */ []string, maxTTL int) {
+// printLossyPathsJSON prints raw JSON output for external program to analyze
+func printLossyPathsJSON(sent, rcvd map[int][]int, hops map[int][]string, maxTTL int) {
 	var report = newReport()
 
 	for srcPort, path := range hops {
-		report.Paths[fmt.Sprintf("%d", srcPort)] = path
-		report.Sent[fmt.Sprintf("%d", srcPort)] = sent[srcPort]
-		report.Rcvd[fmt.Sprintf("%d", srcPort)] = rcvd[srcPort]
+		report.Paths[srcPort] = path
+		report.Sent[srcPort] = sent[srcPort]
+		report.Rcvd[srcPort] = rcvd[srcPort]
 	}
 
 	b, err := json.MarshalIndent(report, "", "\t")
@@ -576,6 +561,10 @@ func printLossyPathsJSON(sent, rcvd map[int] /* src port */ []int, hops map[int]
 
 func main() {
 	flag.Parse()
+	if flag.Arg(0) == "" {
+		fmt.Fprintf(os.Stderr, "Must specify a target\n")
+		return
+	}
 	target := flag.Arg(0)
 
 	var probes []chan interface{}
@@ -637,30 +626,24 @@ func main() {
 		resolved = append(resolved, c)
 	}
 
-	// maps that store various counters per source port/ttl
-	// e..g sent, for every soruce port, contains vector
-	// of sent packets for each TTL
-	sent := make(map[int] /*src Port */ []int /* pkts sent */)
-	rcvd := make(map[int] /*src Port */ []int /* pkts rcvd */)
-	hops := make(map[int] /*src Port */ []string /* hop name */)
+	counters := newReport()
 
 	for srcPort := *baseSrcPort; srcPort < *baseSrcPort+*maxSrcPorts; srcPort++ {
-		sent[srcPort] = make([]int, *maxTTL)
-		rcvd[srcPort] = make([]int, *maxTTL)
-		hops[srcPort] = make([]string, *maxTTL)
+		counters.Sent[srcPort] = make([]int, *maxTTL)
+		counters.Rcvd[srcPort] = make([]int, *maxTTL)
+		counters.Paths[srcPort] = make([]string, *maxTTL)
 		//hops[srcPort][*maxTTL-1] = target
 
 		for i := 0; i < *maxTTL; i++ {
-			hops[srcPort][i] = "?"
+			counters.Paths[srcPort][i] = "?"
 		}
 	}
 
-	// collect all probe specs emitted by senders
-	// once all senders terminate, tell receivers to quit too
+	// collect all probe specs emitted by senders once all senders terminate, tell receivers to quit too
 	go func() {
 		for val := range merge(probes...) {
 			probe := val.(Probe)
-			sent[probe.srcPort][probe.ttl-1]++
+			counters.Sent[probe.srcPort][probe.ttl-1]++
 		}
 		glog.V(2).Infoln("All senders finished!")
 		// give receivers time to catch up on in-flight data
@@ -680,13 +663,13 @@ func main() {
 		switch val.(type) {
 		case ICMPResponse:
 			resp := val.(ICMPResponse)
-			rcvd[resp.srcPort][resp.ttl-1]++
-			currName := hops[resp.srcPort][resp.ttl-1]
+			counters.Rcvd[resp.srcPort][resp.ttl-1]++
+			currName := counters.Paths[resp.srcPort][resp.ttl-1]
 			if currName != "?" && currName != resp.fromName {
 				glog.V(2).Infof("%d: Source port %d flapped at ttl %d from: %s to %s\n", time.Now().UnixNano()/(1000*1000), resp.srcPort, resp.ttl, currName, resp.fromName)
 				flappedPorts[resp.srcPort] = true
 			}
-			hops[resp.srcPort][resp.ttl-1] = resp.fromName
+			counters.Paths[resp.srcPort][resp.ttl-1] = resp.fromName
 			// accumulate all names for processing later
 			// XXX: we may have duplicates, which is OK,
 			// but not very efficient
@@ -705,17 +688,17 @@ func main() {
 			if resp.ttl < lastClosed {
 				lastClosed = resp.ttl
 			}
-			rcvd[resp.srcPort][resp.ttl-1]++
-			hops[resp.srcPort][resp.ttl-1] = target
+			counters.Rcvd[resp.srcPort][resp.ttl-1]++
+			counters.Paths[resp.srcPort][resp.ttl-1] = target
 		}
 	}
 
-	for srcPort, hopVector := range hops {
+	for srcPort, hopVector := range counters.Paths {
 		for i := range hopVector {
 			// truncate lists once we hit the target name
 			if hopVector[i] == target && i < *maxTTL-1 {
-				sent[srcPort] = sent[srcPort][:i+1]
-				rcvd[srcPort] = rcvd[srcPort][:i+1]
+				counters.Sent[srcPort] = counters.Sent[srcPort][:i+1]
+				counters.Rcvd[srcPort] = counters.Rcvd[srcPort][:i+1]
 				hopVector = hopVector[:i+1]
 				break
 			}
@@ -726,16 +709,14 @@ func main() {
 		glog.Infof("A total of %d ports out of %d changed their paths while tracing\n", len(flappedPorts), *maxSrcPorts)
 	}
 
-	lossyPathSent := make(map[int] /*src port */ []int)
-	lossyPathRcvd := make(map[int] /* src port */ []int)
-	lossyPathHops := make(map[int] /*src port*/ []string)
+	lossyCounters := newReport()
 
 	// process the accumulated data, find and output lossy paths
-	for port, sentVector := range sent {
+	for port, sentVector := range counters.Sent {
 		if flappedPorts[port] {
 			continue
 		}
-		if rcvdVector, ok := rcvd[port]; ok {
+		if rcvdVector, ok := counters.Rcvd[port]; ok {
 			norm, err := normalizeRcvd(sentVector, rcvdVector)
 
 			if err != nil {
@@ -746,22 +727,22 @@ func main() {
 			if isLossy(norm) || *showAll {
 				hosts := make([]string, len(norm))
 				for i := range norm {
-					hosts[i] = hops[port][i]
+					hosts[i] = counters.Paths[port][i]
 				}
-				lossyPathSent[port] = sentVector
-				lossyPathRcvd[port] = rcvdVector
-				lossyPathHops[port] = hosts
+				lossyCounters.Sent[port] = sentVector
+				lossyCounters.Rcvd[port] = rcvdVector
+				lossyCounters.Paths[port] = hosts
 			}
 		} else {
 			glog.Errorf("No responses received for port %d", port)
 		}
 	}
 
-	if len(lossyPathHops) > 0 {
+	if len(lossyCounters.Paths) > 0 {
 		if *jsonOutput {
-			printLossyPathsJSON(lossyPathSent, lossyPathRcvd, lossyPathHops, lastClosed+1)
+			printLossyPathsJSON(lossyCounters.Sent, lossyCounters.Rcvd, lossyCounters.Paths, lastClosed+1)
 		} else {
-			printLossyPaths(lossyPathSent, lossyPathRcvd, lossyPathHops, *maxColumns, lastClosed+1)
+			printLossyPaths(lossyCounters.Sent, lossyCounters.Rcvd, lossyCounters.Paths, *maxColumns, lastClosed+1)
 		}
 		return
 	}
